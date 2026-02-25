@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>a-ripple-in-design</title>
+  <style>
+    :root {
+      --bg: #020b16;
+      --fg: #bfeee3;
+      --accent: #79f2cf;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background:
+        radial-gradient(1200px 700px at 18% 12%, rgba(86, 156, 147, 0.08) 0%, rgba(86, 156, 147, 0.02) 36%, rgba(0, 0, 0, 0) 64%),
+        radial-gradient(920px 560px at 78% 20%, rgba(56, 104, 164, 0.10) 0%, rgba(56, 104, 164, 0.03) 40%, rgba(0, 0, 0, 0) 72%),
+        radial-gradient(1300px 900px at 50% 110%, rgba(8, 43, 82, 0.30) 0%, rgba(5, 25, 49, 0.16) 48%, rgba(0, 0, 0, 0) 78%),
+        linear-gradient(180deg, #051427 0%, #03101e 42%, #020d19 70%, var(--bg) 100%);
+      overflow: hidden;
+    }
+
+    body {
+      min-height: 100dvh;
+      font-family: "Courier New", Courier, monospace;
+      color: var(--fg);
+    }
+
+    #ascii {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100vw;
+      height: 100dvh;
+      margin: 0;
+      padding: 0;
+      line-height: 0.95;
+      letter-spacing: 0.02em;
+      white-space: pre;
+      overflow: hidden;
+      user-select: none;
+      pointer-events: none;
+      color: var(--fg);
+      text-shadow:
+        0 0 8px rgba(121, 242, 207, 0.18),
+        0 0 22px rgba(76, 170, 255, 0.08);
+    }
+  </style>
+</head>
+<body>
+  <pre id="ascii" aria-hidden="true"></pre>
+
+  <script>
+    const ascii = document.getElementById("ascii");
+    // Weighted character pool: every rendered character comes from this phrase.
+    // Repeated characters (like spaces and "d") naturally appear more often.
+    const chars = "denby.design";
+    const state = {
+      cols: 0,
+      rows: 0,
+      cellW: 10,
+      cellH: 16,
+      padX: 10,
+      padY: 10,
+      left: 0,
+      top: 0,
+      width: 0,
+      height: 0,
+      t0: performance.now(),
+      mouseX: window.innerWidth * 0.5,
+      mouseY: window.innerHeight * 0.5,
+      mouseVX: 0,
+      mouseVY: 0,
+      lastMX: window.innerWidth * 0.5,
+      lastMY: window.innerHeight * 0.5,
+      lastMoveT: performance.now(),
+      pulse: 0
+    };
+
+    function measureGrid() {
+      // Size from both width and height so mobile portrait doesn't get tiny text.
+      const viewport = window.visualViewport;
+      const viewportWidth = viewport ? viewport.width : window.innerWidth;
+      const viewportHeight = viewport ? viewport.height : window.innerHeight;
+      const isPortrait = viewportHeight > viewportWidth;
+      const targetCols = viewportWidth < 700 ? (isPortrait ? 30 : 46) : 92;
+      const targetRows = viewportWidth < 700 ? (isPortrait ? 40 : 24) : 42;
+      const byWidth = (viewportWidth - 20) / (targetCols * 0.62);
+      const byHeight = (viewportHeight - 20) / (targetRows * 0.95);
+      ascii.style.fontSize = `${clamp(Math.min(byWidth, byHeight), 8, 18)}px`;
+
+      const styles = getComputedStyle(ascii);
+      state.padX = parseFloat(styles.paddingLeft) || 0;
+      state.padY = parseFloat(styles.paddingTop) || 0;
+      const letterSpacing = parseFloat(styles.letterSpacing);
+      const letterSpacingPx = Number.isFinite(letterSpacing) ? letterSpacing : 0;
+
+      const probe = document.createElement("span");
+      probe.textContent = "MMMMMMMMMM";
+      probe.style.visibility = "hidden";
+      probe.style.position = "absolute";
+      probe.style.font = styles.font;
+      probe.style.letterSpacing = styles.letterSpacing;
+      document.body.appendChild(probe);
+      const rect = probe.getBoundingClientRect();
+      document.body.removeChild(probe);
+      // Average advance per character (including letter-spacing).
+      state.cellW = Math.max(1, (rect.width + letterSpacingPx) / 10);
+      const computedLineHeight = parseFloat(styles.lineHeight);
+      state.cellH = Math.max(1, Number.isFinite(computedLineHeight) ? computedLineHeight : rect.height * 0.95);
+      resize();
+    }
+
+    function resize() {
+      const rect = ascii.getBoundingClientRect();
+      state.left = rect.left;
+      state.top = rect.top;
+      state.width = rect.width || window.innerWidth;
+      state.height = rect.height || window.innerHeight;
+      // Overscan by one cell so fractional remainders don't leave visible gaps
+      // on the right/bottom edges (the <pre> clips any overflow).
+      state.cols = Math.max(30, Math.ceil((state.width - state.padX * 2) / state.cellW) + 1);
+      state.rows = Math.max(14, Math.ceil((state.height - state.padY * 2) / state.cellH) + 1);
+    }
+
+    function onPointerMove(e) {
+      const now = performance.now();
+      const dt = Math.max(8, now - state.lastMoveT);
+      const dx = e.clientX - state.lastMX;
+      const dy = e.clientY - state.lastMY;
+      state.mouseVX = dx / dt;
+      state.mouseVY = dy / dt;
+      state.mouseX = e.clientX;
+      state.mouseY = e.clientY;
+      state.lastMX = e.clientX;
+      state.lastMY = e.clientY;
+      state.lastMoveT = now;
+      state.pulse = Math.min(1.5, state.pulse + Math.hypot(dx, dy) * 0.01);
+    }
+
+    function clamp(v, a, b) {
+      return v < a ? a : v > b ? b : v;
+    }
+
+    function sample(x, y, t) {
+      const nx = x / state.cols;
+      const ny = y / state.rows;
+
+      const sx = x - state.cols * 0.5;
+      const sy = y - state.rows * 0.5;
+      const r = Math.hypot(sx, sy) || 1;
+
+      const mx = clamp((state.mouseX - state.left - state.padX) / state.cellW, 0, state.cols - 1);
+      const my = clamp((state.mouseY - state.top - state.padY) / state.cellH, 0, state.rows - 1);
+      const dxm = x - mx;
+      const dym = y - my;
+      const rm = Math.hypot(dxm, dym) || 1;
+
+      const base =
+        Math.sin(r * 0.55 - t * 3.1) * 0.55 +
+        Math.sin((x * 0.35 + y * 0.2) + t * 1.35) * 0.2 +
+        Math.cos((x * 0.16 - y * 0.28) - t * 1.1) * 0.18;
+
+      const mouseRipple =
+        Math.sin(rm * 0.95 - t * 5.2 + state.pulse * 1.5) *
+        Math.exp(-rm * 0.065) *
+        (0.95 + Math.min(1, Math.hypot(state.mouseVX, state.mouseVY) * 4));
+
+      const mousePull = Math.exp(-rm * 0.09) * 0.65;
+      const directional =
+        ((dxm * state.mouseVX) + (dym * state.mouseVY)) * Math.exp(-rm * 0.12) * 0.08;
+
+      const drift =
+        Math.sin((nx * 8 + t * 0.35)) * Math.cos((ny * 6 - t * 0.22)) * 0.12;
+
+      return base + mouseRipple + mousePull + directional + drift;
+    }
+
+    function render(now) {
+      const t = (now - state.t0) / 1000;
+      state.pulse *= 0.965;
+      state.mouseVX *= 0.96;
+      state.mouseVY *= 0.96;
+
+      let out = "";
+      for (let y = 0; y < state.rows; y++) {
+        for (let x = 0; x < state.cols; x++) {
+          const v = sample(x, y, t);
+          const normalized = clamp((v + 1.8) / 3.6, 0, 1);
+          const idx = Math.floor(normalized * (chars.length - 1));
+          out += chars[idx];
+        }
+        if (y < state.rows - 1) out += "\n";
+      }
+      ascii.textContent = out;
+
+      requestAnimationFrame(render);
+    }
+
+    window.addEventListener("resize", measureGrid);
+    window.addEventListener("orientationchange", measureGrid);
+    window.addEventListener("mousemove", onPointerMove, { passive: true });
+    window.addEventListener("touchmove", (e) => {
+      if (e.touches[0]) onPointerMove(e.touches[0]);
+    }, { passive: true });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", measureGrid);
+      window.visualViewport.addEventListener("scroll", measureGrid);
+    }
+
+    measureGrid();
+    requestAnimationFrame(measureGrid);
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>
